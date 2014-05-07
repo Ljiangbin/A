@@ -306,11 +306,13 @@ VOID BeforeGetLock( THREADID threadid,ADDRINT getlock ,ADDRINT ReVal)
 			//fprintf(test,"lock Find,lockID = %d,ThreadNum = %d\n",getlock,tcount);
 			//Detect conflict
 			//int j = (int)tcount;
-			//ThreadLink tLink = TL->next;
+			ThreadLink tLink = TL->next;
 			//fprintf(file,"\n------------------BeforeGetLock  threadid = %d\n",threadid);
 			//for(int k = 0; k < j; k++)
-			for(int k = 0;k < (int)tcount;k++)
+			while(tLink != NULL)
 			{
+				int k = tLink->threadid;
+				tLink = tLink->next;
 				fprintf(test,"cur threadid = %d,compare threadid = %d,lock = %d\n",threadid,k,getlock);
 				if(k == (int)threadid)
 					continue;
