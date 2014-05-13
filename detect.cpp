@@ -40,10 +40,14 @@ LinkSet RecordData[ThreadNum];
 LockLink LL;
 ThreadLink TL;
 ConflictLink ConflictSet;
+Set FinCon = NULL;
+Set ConfigSet = NULL;
 int globalclock[ThreadNum][ThreadNum] = {0};
 int threadclock[ThreadNum][ThreadNum] = {0};
 FILE *file;
 FILE *test;
+FILE *config; 
+bool isRead;
 /*
 void PrintSet(Set s, int ident = 0)
 {
@@ -87,6 +91,23 @@ void PrintSet(Set s)
 		{
 			PrintSet(s->left);
 			PrintSet(s->right);
+		}
+	}
+}
+void PrintSet1(Set s)
+{
+	if (s != NULL)
+	{
+		if (IsLeaf(s)){
+			fprintf(config,"0x%08x-0x%08x\n", s->front, s->rear);
+			if(s->rear < s->front){
+				fprintf(config,"->>>>>>>>>>>>\n");
+			}
+			}
+		else
+		{
+			PrintSet1(s->left);
+			PrintSet1(s->right);
 		}
 	}
 }
@@ -137,7 +158,7 @@ VOID ThreadStart(THREADID threadid, CONTEXT *ctxt, INT32 flags, VOID *v)
   struct tm *p;
   time(&timep);
   p = gmtime(&timep); 
-  fprintf(test,"At %d:%d:%d Thread id = %d is created.And the Total Thread num = %d\n", p->tm_hour+8,p->tm_min, p->tm_sec,threadid,curtcount);
+  //fprintf(test,"At %d:%d:%d Thread id = %d is created.And the Total Thread num = %d\n", p->tm_hour+8,p->tm_min, p->tm_sec,threadid,curtcount);
 	// Initialize the threads LinkSet
 	
 	InitSets(RecordData[threadid]);
@@ -173,11 +194,113 @@ VOID ThreadFini(THREADID threadid, const CONTEXT *ctxt, INT32 code, VOID *v)
   struct tm *p;
   time(&timep);
   p = gmtime(&timep); 
-  fprintf(test,"At %d:%d:%d Thread id = %d is exited.And the Total Thread num = %d\n", p->tm_hour+8,p->tm_min, p->tm_sec,threadid,curtcount);
+  //fprintf(test,"At %d:%d:%d Thread id = %d is exited.And the Total Thread num = %d\n", p->tm_hour+8,p->tm_min, p->tm_sec,threadid,curtcount);
 	Link NewNode;
 	CreateNode(NewNode);
 	InsertNode(RecordData[threadid],NewNode);
 	RecordData[threadid].head->next->data.clock[threadid]++;
+	for(int k = 0;k < (int)tcount;k++)
+			{
+				//fprintf(test,"cur threadid = %d,compare threadid = %d,lock = %d\n",threadid,k,getlock);
+				if(k == (int)threadid)
+					continue;
+				LockLink l1 = LL->next;
+	      int num = 0,num1 = 0;
+	      while(l1 != NULL)
+	      {
+	       if(num < l1->clock[k]) num = l1->clock[k];
+	       if(num1 < l1->clock[threadid]) num1 = l1->clock[threadid];
+	       l1 = l1->next;	
+	      }
+				int itsLower = globalclock[k][threadid];
+				int itsUpper = num;
+				int myUpper = RecordData[threadid].head->next->data.clock[threadid];
+				int myLower = Max(num1,threadclock[threadid][k]);
+				/*int myLower = globalclock[threadid][k];
+				int myUpper = RecordData[threadid].head->next->data.clock[threadid];
+				int itsLower = RecordData[threadid].head->next->data.clock[k];
+				int itsUpper = Lock->clock[k];*/
+				/*int itsLower = 0;
+				int itsUpper = RecordData[k].head->next->data.clock[k];
+				int myUpper = RecordData[threadid].head->next->data.clock[threadid];
+				int myLower = 0;*/
+				//fprintf(test,"Lock Clock:\n");
+				//for(int mmm = 0;mmm < (int)tcount;mmm++){
+					//fprintf(test,"Lock->clock[%d] = %d\n",mmm,Lock->clock[mmm]);	
+				//}
+				//fprintf(test,"myLow = %d,myUpper = %d,itsLower = %d,itsUpper = %d,compare id = %d\n",myLower,myUpper,itsLower,itsUpper,k);
+				Link myUpperPointer = NULL;
+				Link itsUpperPointer = NULL;
+				//Current thread's pointer
+				myUpperPointer = RecordData[threadid].head->next;
+			   //Contrast thread's pointer
+				itsUpperPointer = RecordData[k].head->next;
+				if(myUpper < myLower || itsUpper <= itsLower){
+					continue;
+				}
+				//fprintf(test,"here\n");
+				while(itsUpperPointer != NULL  && itsUpperPointer->data.clock[k] >= itsUpper)
+					{
+						itsUpperPointer = itsUpperPointer->next;
+					}
+				while(myUpperPointer != NULL && myUpperPointer->data.clock[threadid] > myUpper )
+					{
+						myUpperPointer = myUpperPointer->next;
+					}
+				if(itsUpperPointer == NULL || myUpperPointer == NULL)
+					continue;
+			
+			
+				Link myTemp = NULL;
+				Link itsTemp = NULL;
+				//printf("here1\n");
+				myTemp = myUpperPointer;
+				for(int i = myUpper; i >= myLower ; i--){
+					itsTemp = itsUpperPointer;
+					for(int j = itsUpper - 1; j >= itsLower ; j--){
+						Set RandW = Intersection(itsTemp->data.MemReadSet,myTemp->data.MemWriteSet);
+						Set WandR = Intersection(myTemp->data.MemWriteSet,itsTemp->data.MemReadSet);
+						Set WandW = Intersection(myTemp->data.MemWriteSet,itsTemp->data.MemWriteSet);
+						//fprintf(test,"compare is doing\n");
+						Set Conflict = Union(RandW,WandR);
+						Conflict = Union(Conflict,WandW);
+						//printf("here3\n");
+						if(Conflict != NULL)
+						{
+							//fprintf(test,"DataRace Find in thid = %d and thid = %d\n",threadid,k);
+							//PrintSet(Conflict);
+							FinCon = Union(FinCon,Conflict);
+							//printf("here4\n");
+							/*if(ConflictSet == NULL)
+							{
+								ConflictSet = (ConflictLink)malloc(sizeof(struct connode));
+								ConflictSet->data = CreateSet();
+								ConflictSet->next = NULL;
+							}
+							ConflictLink p,q;
+							p = ConflictSet;
+							while(p->next != NULL)
+							{
+								p = p->next;
+								if(p->next == NULL) printf("p->next = NULL\n");
+							}
+												printf("here5\n");
+							q = (ConflictLink)malloc(sizeof(struct connode));
+							q->data = CreateSet();
+							q->LocationCur = NULL;
+							q->LocationCon = NULL;
+							q->data = Union(q->data,Conflict);
+							p->next = q;
+							q->next = NULL;*/
+						}
+						itsTemp = itsTemp->next;
+					}				
+					myTemp = myTemp->next;
+				
+				}
+			//update globalclock
+			globalclock[k][threadid] = num;	
+			}
 	PIN_ReleaseLock(&lock);
 //PIN_PRINT("ThreadFiniE");
 }
@@ -266,7 +389,7 @@ VOID BeforeDestroyLock(ADDRINT getlock, THREADID threadid,ADDRINT ReVal)
 // This routine is executed each time pthread_mutex_lock is called.
 VOID BeforeGetLock( THREADID threadid,ADDRINT getlock ,ADDRINT ReVal)
 {
-	fprintf(test,"BeforeGetLock, OK=%d, ReVal=%d\n", OK, ReVal);
+	//fprintf(test,"BeforeGetLock, OK=%d, ReVal=%d\n", OK, ReVal);
 	if(OK) {
 		if(ReVal)  return;
 	}else{
@@ -296,13 +419,13 @@ VOID BeforeGetLock( THREADID threadid,ADDRINT getlock ,ADDRINT ReVal)
 	//fprintf(test,"Out CurLock = %d\n",getlock);
 	//printLock();
 	if(lckTemp != NULL){
-		fprintf(test,"CurLock = %d\n",getlock);
-		printLock();
+		//fprintf(test,"CurLock = %d\n",getlock);
+		//printLock();
 		if(lckTemp->isFirst){
 			lckTemp->isFirst = false;
-			fprintf(test,"isFirst = true,threadid = %d,lock = %d\n",threadid,getlock);
+			//fprintf(test,"isFirst = true,threadid = %d,lock = %d\n",threadid,getlock);
 		}else{
-			fprintf(test,"isFirst = false,threadid = %d,lock = %d\n",threadid,getlock);
+			//fprintf(test,"isFirst = false,threadid = %d,lock = %d\n",threadid,getlock);
 			//fprintf(test,"lock Find,lockID = %d,ThreadNum = %d\n",getlock,tcount);
 			//Detect conflict
 			//int j = (int)tcount;
@@ -311,7 +434,7 @@ VOID BeforeGetLock( THREADID threadid,ADDRINT getlock ,ADDRINT ReVal)
 			//for(int k = 0; k < j; k++)
 			for(int k = 0;k < (int)tcount;k++)
 			{
-				fprintf(test,"cur threadid = %d,compare threadid = %d,lock = %d\n",threadid,k,getlock);
+				//fprintf(test,"cur threadid = %d,compare threadid = %d,lock = %d\n",threadid,k,getlock);
 				if(k == (int)threadid)
 					continue;
 				int itsLower = globalclock[k][threadid];
@@ -326,11 +449,11 @@ VOID BeforeGetLock( THREADID threadid,ADDRINT getlock ,ADDRINT ReVal)
 				int itsUpper = RecordData[k].head->next->data.clock[k];
 				int myUpper = RecordData[threadid].head->next->data.clock[threadid];
 				int myLower = 0;*/
-				fprintf(test,"Lock Clock:\n");
-				for(int mmm = 0;mmm < (int)tcount;mmm++){
-					fprintf(test,"Lock->clock[%d] = %d\n",mmm,Lock->clock[mmm]);	
-				}
-				fprintf(test,"myLow = %d,myUpper = %d,itsLower = %d,itsUpper = %d,compare id = %d\n",myLower,myUpper,itsLower,itsUpper,k);
+				//fprintf(test,"Lock Clock:\n");
+				//for(int mmm = 0;mmm < (int)tcount;mmm++){
+					//fprintf(test,"Lock->clock[%d] = %d\n",mmm,Lock->clock[mmm]);	
+				//}
+				//fprintf(test,"myLow = %d,myUpper = %d,itsLower = %d,itsUpper = %d,compare id = %d\n",myLower,myUpper,itsLower,itsUpper,k);
 				Link myUpperPointer = NULL;
 				Link itsUpperPointer = NULL;
 				//Current thread's pointer
@@ -340,7 +463,7 @@ VOID BeforeGetLock( THREADID threadid,ADDRINT getlock ,ADDRINT ReVal)
 				if(myUpper < myLower || itsUpper <= itsLower){
 					continue;
 				}
-				fprintf(test,"here\n");
+				//fprintf(test,"here\n");
 				while(itsUpperPointer != NULL  && itsUpperPointer->data.clock[k] >= itsUpper)
 					{
 						itsUpperPointer = itsUpperPointer->next;
@@ -363,14 +486,15 @@ VOID BeforeGetLock( THREADID threadid,ADDRINT getlock ,ADDRINT ReVal)
 						Set RandW = Intersection(itsTemp->data.MemReadSet,myTemp->data.MemWriteSet);
 						Set WandR = Intersection(myTemp->data.MemWriteSet,itsTemp->data.MemReadSet);
 						Set WandW = Intersection(myTemp->data.MemWriteSet,itsTemp->data.MemWriteSet);
-							fprintf(test,"compare is doing\n");
+						//fprintf(test,"compare is doing\n");
 						Set Conflict = Union(RandW,WandR);
 						Conflict = Union(Conflict,WandW);
 						//printf("here3\n");
 						if(Conflict != NULL)
 						{
-							fprintf(test,"DataRace Find in thid = %d and thid = %d\n",threadid,k);
-							PrintSet(Conflict);
+							//fprintf(test,"DataRace Find in thid = %d and thid = %d\n",threadid,k);
+							//PrintSet(Conflict);
+							FinCon = Union(FinCon,Conflict);
 							//printf("here4\n");
 							/*if(ConflictSet == NULL)
 							{
@@ -456,6 +580,30 @@ PIN_PRINT("BeforeGetUnlockB");
 		else
 			Lock = Lock->next;
 	}
+		//delete Set
+	int DelSetNum = 0;
+	bool flag = false;
+	for(int i = 0;i < (int)tcount;i++)
+	{
+		if(i == threadid) continue;
+		if(!flag) {
+			DelSetNum = globalclock[threadid][i];
+			flag = true;
+			continue;
+		}
+		if(globalclock[threadid][i] < DelSetNum)	
+		{
+				DelSetNum = globalclock[threadid][i];
+		}
+	}
+	Link Pointer = RecordData[threadid].head->next;
+	while(Pointer != NULL && Pointer->data.clock[threadid] > DelSetNum )
+	{
+						Pointer = Pointer->next;
+	}
+	if(Pointer != NULL ){
+			Pointer->next = NULL;
+	}
 	PIN_ReleaseLock(&lock);
 PIN_PRINT("BeforeGetUnlockE");
 }
@@ -465,7 +613,20 @@ VOID RecordMemRead(VOID * ip, VOID * addr, UINT32 MemReadSize, THREADID threadid
 {
 	mrcount[threadid]++;
 	unsigned int Address = (unsigned int)addr;
+	INS *a =(INS*)ip;
+	INS ins = *a;
 	RecordData[threadid].head->next->data.MemReadSet = Insert(RecordData[threadid].head->next->data.MemReadSet, Address, MemReadSize);
+	if(LookUp(ConfigSet,Address)){
+		fprintf(file,"%s\n",RTN_FindNameByAddress(Address).c_str());
+		if(INS_Valid(ins)){
+			//INS_Address(ins);
+			//printf("ins = 0x%08x,ip = 0x%08x\n",a,ip);
+			}
+		//fprintf(file,"thread id = %d,addr = 0x%08x,PC = 0x%08x,rtnName = %s,opcode = %s,MemReadSize = %d\n",threadid,Address,ip,RTN_Name(INS_Rtn(ins)).c_str(),OPCODE_StringShort(INS_Opcode(ins)).c_str(),MemReadSize);
+		}
+	//if(RTN_Valid(INS_Rtn(ins)))
+	//fprintf(file,"thread id = %d,addr = 0x%08x,rtnName = %s,size = %d\n",threadid,Address,RTN_Name(INS_Rtn(ins)).c_str(),MemReadSize);
+	//fprintf(file,"read.thread id = %d,addr = 0x%08x,ip = 0x%08x,size = %d\n",threadid,Address,ip,MemReadSize);
 }
 
 // Print a memory write record
@@ -473,7 +634,13 @@ VOID RecordMemWrite(VOID * ip, VOID * addr, UINT32 MemWriteSize, THREADID thread
 {
 	mwcount[threadid]++;
 	unsigned int Address = (unsigned int)addr;
+	INS ins = *((INS*)ip);
 	RecordData[threadid].head->next->data.MemWriteSet = Insert(RecordData[threadid].head->next->data.MemWriteSet, Address, MemWriteSize);
+	if(LookUp(ConfigSet,Address)){
+		//fprintf(file,"%s\n",RTN_FindNameByAddress(Address).c_str());
+		//fprintf(file,"thread id = %d,addr = 0x%08x,PC = 0x%08x,rtnName = %s,opcode = %s,MemWriteSize = %d\n",threadid,Address,ip,RTN_Name(INS_Rtn(ins)).c_str(),OPCODE_StringShort(INS_Opcode(ins)).c_str(),MemWriteSize);
+		}
+	//fprintf(file,"write.thread id = %d,addr = 0x%08x,ip = 0x%08x,size = %d\n",threadid,Address,ip,MemWriteSize);
 }
 
 //====================================================================
@@ -576,11 +743,11 @@ PIN_PRINT("ImageLoad3");
 
 		RTN_Close(rtn4);
 	}
-	/*RTN rtn5 = RTN_FindByName(img, "CreateEventW");
+	RTN rtn5 = RTN_FindByName(img, "CreateMutexW");
 	if (RTN_Valid( rtn5))
 	{
 		//fprintf(test,"img = %s,rtn = %s\n",IMG_Name(img).c_str(),RTN_Name(rtn0).c_str());
-		fprintf(test,"CreateEventW find\n");
+		//fprintf(test,"CreateMutexW find\n");
 		RTN_Open(rtn5);
 		RTN_InsertCall(rtn5, IPOINT_AFTER, AFUNPTR(BeforeInitLock),
 					   IARG_FUNCRET_EXITPOINT_VALUE ,
@@ -588,7 +755,33 @@ PIN_PRINT("ImageLoad3");
 					   IARG_FUNCARG_ENTRYPOINT_VALUE,0,
 					   IARG_END);	   			   
 		RTN_Close(rtn5);
-	}*/
+	}
+	RTN rtn6 = RTN_FindByName(img, "OpenMutexW");
+	if (RTN_Valid( rtn6))
+	{
+		//fprintf(test,"img = %s,rtn = %s\n",IMG_Name(img).c_str(),RTN_Name(rtn0).c_str());
+		//fprintf(test,"CreateMutexW find\n");
+		RTN_Open(rtn6);
+		RTN_InsertCall(rtn6, IPOINT_AFTER, AFUNPTR(BeforeInitLock),
+					   IARG_FUNCRET_EXITPOINT_VALUE ,
+					   IARG_THREAD_ID,
+					   IARG_FUNCARG_ENTRYPOINT_VALUE,0,
+					   IARG_END);	   			   
+		RTN_Close(rtn6);
+	}
+	RTN rtn7 = RTN_FindByName(img, "OpenMutexA");
+	if (RTN_Valid( rtn7))
+	{
+		//fprintf(test,"img = %s,rtn = %s\n",IMG_Name(img).c_str(),RTN_Name(rtn0).c_str());
+		//fprintf(test,"CreateMutexW find\n");
+		RTN_Open(rtn7);
+		RTN_InsertCall(rtn7, IPOINT_AFTER, AFUNPTR(BeforeInitLock),
+					   IARG_FUNCRET_EXITPOINT_VALUE ,
+					   IARG_THREAD_ID,
+					   IARG_FUNCARG_ENTRYPOINT_VALUE,0,
+					   IARG_END);	   			   
+		RTN_Close(rtn7);
+	}
 //PIN_PRINT("ImageLoad");
 }
 
@@ -604,10 +797,13 @@ VOID Instruction(INS ins, VOID *v)
 	// Iterate over each memory operand of the instruction.
 	for (UINT32 memOp = 0; memOp < memOperands; memOp++)
 	{
+		//if(INS_OperandIsReg(ins, memOp)){printf("Reg Read\n");continue;}
 		if (INS_MemoryOperandIsRead(ins, memOp))
 		{
 			UINT32 MemReadSize = INS_MemoryReadSize(ins);
 			if(!INS_IsStackRead	(ins)){
+				//if(RTN_Valid(INS_Rtn(ins))){
+				//if(RTN_Name(INS_Rtn(ins)).find("main",0)!= string::npos||RTN_Name(INS_Rtn(ins)).find("thread",0)!= string::npos)
 				INS_InsertPredicatedCall(
 					ins, IPOINT_BEFORE, (AFUNPTR)RecordMemRead,
 					IARG_INST_PTR,
@@ -615,6 +811,12 @@ VOID Instruction(INS ins, VOID *v)
 					IARG_UINT32, MemReadSize,
 					IARG_THREAD_ID,
 					IARG_END);
+					//fprintf(file,"0x%08x\n",IARG_MEMORYREAD_EA); 
+				  //}
+					//if(RTN_Valid(INS_Rtn(ins))){
+						//if(RTN_Name(INS_Rtn(ins)).find("main",0) != string::npos||RTN_Name(INS_Rtn(ins)).find("thread",0) != string::npos)
+						//fprintf(file,"read.thread id = %d,ip1 = 0x%08x,rtnName = %s,size = %d\n",IARG_THREAD_ID,INS_Address(ins),RTN_Name(INS_Rtn(ins)).c_str(),MemReadSize);
+					//}
 				}//else printf("stack read\n");
 		}
 		// Note that in some architectures a single memory operand can be 
@@ -625,13 +827,20 @@ VOID Instruction(INS ins, VOID *v)
 			UINT32 MemWriteSize = INS_MemoryWriteSize(ins);
 			//printf("writesize %d\n",MemWriteSize);
 			if(!INS_IsStackWrite(ins)){
-				INS_InsertPredicatedCall(
+				//	if(RTN_Valid(INS_Rtn(ins))){
+				//	if(RTN_Name(INS_Rtn(ins)).find("main",0)!= string::npos||RTN_Name(INS_Rtn(ins)).find("thread",0)!= string::npos)
+					INS_InsertPredicatedCall(
 					ins, IPOINT_BEFORE, (AFUNPTR)RecordMemWrite,
 					IARG_INST_PTR,
 					IARG_MEMORYOP_EA, memOp,
 					IARG_UINT32, MemWriteSize,
 					IARG_THREAD_ID,
 					IARG_END);
+					//}
+					//if(RTN_Valid(INS_Rtn(ins))){
+						//if(RTN_Name(INS_Rtn(ins)).find("main",0) != string::npos||RTN_Name(INS_Rtn(ins)).find("thread",0) != string::npos)
+					//	fprintf(file,"write.thread id = %d,ip1 = 0x%08x,rtnName = %s,size = %d\n",IARG_THREAD_ID,INS_Address(ins),RTN_Name(INS_Rtn(ins)).c_str(),MemWriteSize);
+					//}
 				}//else { printf("stack write\n");}
 		}
 	}
@@ -642,18 +851,21 @@ VOID Fini(INT32 code, VOID *v)
 {
 	int tmp1 = 0;
 	int tmp2 = 0;
-	fprintf(test,"every thread read and write is:\n");
+	//fprintf(test,"every thread read and write is:\n");
 	for(int i = 0;i < (int)tcount;i++)
 	{
 		tmp1 += mrcount[i];
 		tmp2 += mwcount[i];
-		fprintf(test,"mrcount[%d] = %d,mwcount[%d] = %d\n",i,(int)mrcount[i],i,(int)mwcount[i]);
+		//fprintf(test,"mrcount[%d] = %d,mwcount[%d] = %d\n",i,(int)mrcount[i],i,(int)mwcount[i]);
 	}
 	//printf("tcount = %lu,mrcount = %lu,mwcount = %lu,total = %lu\n",tcount,tmp1,tmp2,(tmp1+tmp2));
-	fprintf(test,"total read and write.mrcount = %d,mwcount = %d,total = %d\n",tmp1,tmp2,tmp1+tmp2);
-	fprintf(test,"Lock num = %d,Unlock num = %d\n",(int)LockCount,(int)UnlockCount);
+	//fprintf(test,"total read and write.mrcount = %d,mwcount = %d,total = %d\n",tmp1,tmp2,tmp1+tmp2);
+	//fprintf(test,"Lock num = %d,Unlock num = %d\n",(int)LockCount,(int)UnlockCount);
+	if(FinCon != NULL)PrintSet(FinCon);
+	if(!isRead && FinCon != NULL)PrintSet1(FinCon);
 	fclose(file);
 	fclose(test);
+	fclose(config);
 	//PIN_PRINT("end program");
 }
 
@@ -675,11 +887,41 @@ int main(INT32 argc, CHAR **argv)
 {
 //PIN_PRINT("main");
    file = fopen("race.log","wb");
-   test = fopen("test.log","wb");
+   test = fopen("test.log","wb"); 
+   unsigned int front,rear;
+   //bool isRead = false;
+   UINT32 size;
+   printf("%d\n",argc);
+   if(argc == 10 && atoi(argv[argc-1]) == 1) 
+   	{
+   		printf("isRead = true\n");
+   		isRead = true;
+   	}else{
+   	 isRead = false;	
+   	}
+   if(isRead){
+   		config = fopen("config.log","rb"); 
+   		if(config == NULL) printf("config 打开文件失败\n");
+   	}else{
+   		config = fopen("config.log","wb"); 
+   		if(config == NULL) printf("config 打开文件失败\n");
+   	}
+   if(isRead && config != NULL) {
+   	while(fscanf(config,"%x",&front) != EOF){
+   			char ch = fgetc(config);
+   			fscanf(config,"%x",&rear);
+   			size = rear-front + 1;
+   	  	ConfigSet = Insert(ConfigSet,front,size);
+   	  	//printf("0x%08x-0x%08x size = %u\n",front,rear,size);
+   	  }
+   }
+   //PrintSet1(ConfigSet);
+   
+  //if(file == NULL) return 0;
    if(file == NULL) fprintf(file,"打开文件失败\n");
    if(test == NULL) fprintf(test,"打开文件失败\n");
-   fprintf(file,"进入文件race\n");
-   fprintf(test,"进入文件test\n");
+  // fprintf(file,"进入文件race\n");
+  // fprintf(test,"进入文件test\n");
 	// Initialize the pin lock
 	PIN_InitLock(&lock);
 
